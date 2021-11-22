@@ -4,42 +4,31 @@ import requests
 import json
 import logging
 import time
+import datetime
 from typing import Dict
 from google.cloud import bigquery
+import sys
 from trexMinerDataSchema import TrexMinerDataSchema
 
 
 TREX_HOST = "127.0.0.1"
 TREX_PORT = "4067"
 TARGET_ADDRESS = f"http://{TREX_HOST}:{TREX_PORT}/summary"
-INTERVAL_SECONDS = 5
+INTERVAL_SECONDS = 300  # Every 5 minutes
 logging.basicConfig(level=logging.DEBUG)
 
 
-def pretty(input: json, indent: int = 4) -> str:
-    """Print out JSON."""
-    return logging.debug(json.dumps(json.loads(input), indent=indent))
-
-
-def writeToBigQuery(row: Dict) -> str:
+def writeToBigQuery(query: str) -> str:
     """Upload one entry to BigQuery.
 
     Args:
-        row: One entity of data made up of key-value pair of field and value.
-             [field_name, field_value]
+        query: Full query to send to BigQuery.
 
     Returns: BigQuery return.
     """
     logging.info("Writing to BigQuery...")
-    logging.info("Connecting to BigQuery...")
 
     client = bigquery.Client()
-
-    query = """
-        INSERT desktop_logs.eth_logs ()
-        VALUES('The Great Gatsby', 'F. Scott Fizgerald'),
-              ('War and Peace', 'Leo Tolstoy');
-    """
 
     query_job = client.query(query)
     results = query_job.result()  # Waits for job to complete.
@@ -48,22 +37,39 @@ def writeToBigQuery(row: Dict) -> str:
     return results
 
 
-def jsonToDict(logJson: json) -> Dict:
-    """Extract data from log into dictionary.
+def buildInsertNewEntryQuery(logContent: dict) -> str:
+    fields = ""
+    values = ""
+
+    lengthLog = len(logContent)
+    print("LENGTH: ", len(logContent))
+    for field, value in logContent.items():
+        #  Avoid syntax errors in BigQuery SQL with last comma
+        if lengthLog <= 1:
+            fields += f"{field}"
+            values += f"'{value}'"
+        else:
+            fields += f"{field},"
+            values += f"'{value}',"
+            lengthLog -= 1
+
+    now = datetime.datetime()
+    return f"""
+        INSERT `trex-watcher.desktop_logs.desktop_miner`
+            ({fields}, script_exe_datetime, script_interval_seconds)
+        VALUES ({values}, {now}, {INTERVAL_SECONDS});
+    """
+
+
+def createSchema(logEntry: json) -> dict:
+    """Turn JSON log entry into Data Schema Object.
 
     Args:
-        logJson: JSON object from Trex.
+        logEntry: One row of logs entry from Trex Miner.
 
-    Returns: Dictionary.
+    Returns: Specified fields as dictionary.
     """
-    logEntry = {
-
-    }
-    return logEntry
-
-
-def buildQuery(log: json) -> str:
-    pass
+    return TrexMinerDataSchema(logEntry).getSchema()
 
 
 def startWatcher() -> None:
@@ -75,7 +81,12 @@ def startWatcher() -> None:
 
             logContent = TrexMinerDataSchema(
                 json.loads(response.text)).getSchema()
+            logging.debug("Size of entry: %s bytes", sys.getsizeof(logContent))
             logging.debug(logContent)
+            query = buildInsertNewEntryQuery(logContent)
+            logging.debug(query)
+            logging.info(writeToBigQuery(query))
+
             time.sleep(INTERVAL_SECONDS)
     except KeyboardInterrupt as ki:
         logging.info("STOP MONITORING ON %s *** \n %s", TARGET_ADDRESS, ki)
@@ -83,7 +94,7 @@ def startWatcher() -> None:
     # with open("s.txt", "w+") as f:
     # for p in x:
     #     if p.isinstance():
-    #         print(f""""{p}": logJson["{p}"],""")
+    #         print(f""""{p}": logJson["{p}"], """)
 
 
 def iterateJson(jsonObject: json) -> None:
