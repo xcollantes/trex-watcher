@@ -13,6 +13,7 @@ from trexMinerDataSchema import TrexMinerDataSchema
 
 TREX_HOST = "127.0.0.1"
 TREX_PORT = "4067"
+BIGQUERY_TABLENAME = "trex-watcher.desktop_logs.desktop_miner"
 TARGET_ADDRESS = f"http://{TREX_HOST}:{TREX_PORT}/summary"
 INTERVAL_SECONDS = 300  # Every 5 minutes
 logging.basicConfig(level=logging.DEBUG)
@@ -31,8 +32,12 @@ def writeToBigQuery(query: str) -> str:
     client = bigquery.Client()
 
     query_job = client.query(query)
-    results = query_job.result()  # Waits for job to complete.
-    logging.info(results)
+    results = None
+    try:
+        results = query_job.result()  # Waits for job to complete.
+    finally:
+        client.close()
+        logging.info(results)
 
     return results
 
@@ -53,11 +58,11 @@ def buildInsertNewEntryQuery(logContent: dict) -> str:
             values += f"'{value}',"
             lengthLog -= 1
 
-    now = datetime.datetime()
+    now = datetime.datetime.now()
     return f"""
-        INSERT `trex-watcher.desktop_logs.desktop_miner`
+        INSERT `{BIGQUERY_TABLENAME}`
             ({fields}, script_exe_datetime, script_interval_seconds)
-        VALUES ({values}, {now}, {INTERVAL_SECONDS});
+        VALUES ({values}, '{now.strftime("%b %d %Y %H:%M:%S")}', '{INTERVAL_SECONDS}');
     """
 
 
